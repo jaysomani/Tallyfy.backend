@@ -33,4 +33,14 @@ router.get('/tempLedgers', async (req, res) => {
   }
 });
 
+// Route for deleting a temporary table
+router.post('/deleteTempTable', async (req, res) => {
+  try {
+    await transactionsController.deleteTempTable(req, res);
+  } catch (error) {
+    console.error("Error in deleteTempTable:", error);
+    res.status(500).json({ error: "Error deleting temp table", details: error.message });
+  }
+});
+
 module.exports = router;
