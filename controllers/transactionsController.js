@@ -445,3 +445,43 @@ exports.getTempLedgers = async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 };
+
+
+ exports.deleteTempTable = async (req, res) => {
+   try {
+     const { id, email, company } = req.body;
+     
+     if (!id || !email || !company) {
+       return res.status(400).json({ error: 'Missing id, email, or company' });
+     }
+     
+     // Get the temp_table value
+     const tableResult = await pool.query(
+       `SELECT temp_table FROM user_temp_tables WHERE id = $1 AND email = $2 AND company = $3`,
+       [id, email, company]
+     );
+     
+     if (tableResult.rows.length === 0) {
+       return res.status(404).json({ error: 'Temporary table not found' });
+     }
+     
+     const tempTable = tableResult.rows[0].temp_table;
+     
+     // Delete all related transactions first
+     await pool.query(
+       `DELETE FROM temporary_transactions WHERE upload_id = $1`,
+       [tempTable]
+     );
+     
+     // Then delete the entry from user_temp_tables
+     await pool.query(
+       `DELETE FROM user_temp_tables WHERE id = $1 AND email = $2 AND company = $3`,
+       [id, email, company]
+     );
+     
+     res.json({ message: 'Temporary table and related transactions deleted successfully' });
+   } catch (err) {
+     console.error('Error in deleteTempTable:', err);
+     res.status(500).json({ error: 'Database error' });
+   }
+ };
