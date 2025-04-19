@@ -63,88 +63,7 @@ exports.createTempTable = async (req, res) => {
   }
 };
 
-exports.updateTempTableLedgers = async (req, res) => {
-  const { temp_table, email, company, transactions } = req.body
 
-  // 1) Validate request body
-  if (!temp_table || !email || !company || !Array.isArray(transactions)) {
-    return res
-      .status(400)
-      .json({ error: 'Missing required fields: temp_table, email, company, transactions[]' })
-  }
-  if (!/^[A-Za-z0-9_]+$/.test(temp_table)) {
-    return res
-      .status(400)
-      .json({ error: 'Invalid temp_table name' })
-  }
-  // now also require transaction_type to be a string
-  if (transactions.some(tx =>
-        typeof tx.id               !== 'number' ||
-        typeof tx.ledger           !== 'string' ||
-        typeof tx.transaction_type !== 'string'
-      )) {
-    return res
-      .status(400)
-      .json({
-        error: 'Each transaction must have numeric id, string ledger, and string transaction_type'
-      })
-  }
-
-  const client = await pool.connect()
-  try {
-    // 2) Verify ownership
-    const meta = await client.query(
-      `SELECT 1
-         FROM user_temp_tables
-        WHERE email      = $1
-          AND company    = $2
-          AND temp_table = $3
-        LIMIT 1`,
-      [email, company, temp_table]
-    )
-    if (meta.rowCount === 0) {
-      return res
-        .status(404)
-        .json({ error: 'Temp table not found for this user/company' })
-    }
-
-    // 3) Begin transaction
-    await client.query('BEGIN');
-
-    let updatedCount = 0;
-    // now update both ledger AND transaction_type
-    const updateSql = `UPDATE "${temp_table}"
-                          SET ledger           = $1,
-                              transaction_type = $2
-                        WHERE id               = $3`
-
-    for (const { id, ledger, transaction_type } of transactions) {
-      const result = await client.query(
-        updateSql,
-        [ledger, transaction_type, id]
-      )
-      updatedCount += result.rowCount
-    }
-
-    // 4) Commit all updates
-    await client.query('COMMIT');
-
-    // 5) Respond
-    return res.json({
-      success:       true,
-      message:       'Ledger mappings updated successfully',
-      updated_count: updatedCount
-    })
-
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('Error updating temp table ledgers:', err);
-    return res.status(500).json({ error: 'Database error' })
-
-  } finally {
-    client.release();
-  }
-}
 
 // Add this to your transactionsController.js file
 exports.executeSql = async (req, res) => {
@@ -241,6 +160,88 @@ exports.insertParsedReceipts = async (req, res) => {
   }
 };
 
+exports.updateTempTableLedgers = async (req, res) => {
+  const { temp_table, email, company, transactions } = req.body
+
+  // 1) Validate request body
+  if (!temp_table || !email || !company || !Array.isArray(transactions)) {
+    return res
+      .status(400)
+      .json({ error: 'Missing required fields: temp_table, email, company, transactions[]' })
+  }
+  if (!/^[A-Za-z0-9_]+$/.test(temp_table)) {
+    return res
+      .status(400)
+      .json({ error: 'Invalid temp_table name' })
+  }
+  // now also require transaction_type to be a string
+  if (transactions.some(tx =>
+        typeof tx.id               !== 'number' ||
+        typeof tx.ledger           !== 'string' ||
+        typeof tx.transaction_type !== 'string'
+      )) {
+    return res
+      .status(400)
+      .json({
+        error: 'Each transaction must have numeric id, string ledger, and string transaction_type'
+      })
+  }
+
+  const client = await pool.connect()
+  try {
+    // 2) Verify ownership
+    const meta = await client.query(
+      `SELECT 1
+         FROM user_temp_tables
+        WHERE email      = $1
+          AND company    = $2
+          AND temp_table = $3
+        LIMIT 1`,
+      [email, company, temp_table]
+    )
+    if (meta.rowCount === 0) {
+      return res
+        .status(404)
+        .json({ error: 'Temp table not found for this user/company' })
+    }
+
+    // 3) Begin transaction
+    await client.query('BEGIN');
+
+    let updatedCount = 0;
+    // now update both ledger AND transaction_type
+    const updateSql = `UPDATE "${temp_table}"
+                          SET ledger           = $1,
+                              transaction_type = $2
+                        WHERE id               = $3`
+
+    for (const { id, ledger, transaction_type } of transactions) {
+      const result = await client.query(
+        updateSql,
+        [ledger, transaction_type, id]
+      )
+      updatedCount += result.rowCount
+    }
+
+    // 4) Commit all updates
+    await client.query('COMMIT');
+
+    // 5) Respond
+    return res.json({
+      success:       true,
+      message:       'Ledger mappings updated successfully',
+      updated_count: updatedCount
+    })
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error updating temp table ledgers:', err);
+    return res.status(500).json({ error: 'Database error' })
+
+  } finally {
+    client.release();
+  }
+}
 // Add this function to your transactionsController.js
 exports.alterTempTable = async (req, res) => {
   try {
@@ -348,16 +349,20 @@ exports.deleteTransaction = async (req, res) => {
     if (!tempTable || !transactionId) {
       return res.status(400).json({ error: 'Missing tempTable or transactionId' });
     }
-    await pool.query(
-      `DELETE FROM temporary_transactions WHERE upload_id = $1 AND id = $2`,
-      [tempTable, transactionId]
-    );
+
+    // Basic validation to prevent SQL injection
+    const safeTable = tempTable.replace(/[^a-zA-Z0-9_]/g, '');
+
+    const query = `DELETE FROM ${safeTable} WHERE id = $1`;
+    await pool.query(query, [transactionId]);
+
     res.json({ message: 'Transaction deleted successfully' });
   } catch (err) {
     console.error('Error in deleteTransaction:', err);
     res.status(500).json({ error: 'Database error' });
   }
 };
+
 
 /**
  * Lists all temp tables for a user/company
