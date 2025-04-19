@@ -77,10 +77,17 @@ exports.updateTempTableLedgers = async (req, res) => {
       .status(400)
       .json({ error: 'Invalid temp_table name' })
   }
-  if (transactions.some(tx => typeof tx.id !== 'number' || typeof tx.ledger !== 'string')) {
+  // now also require transaction_type to be a string
+  if (transactions.some(tx =>
+        typeof tx.id               !== 'number' ||
+        typeof tx.ledger           !== 'string' ||
+        typeof tx.transaction_type !== 'string'
+      )) {
     return res
       .status(400)
-      .json({ error: 'Each transaction must have numeric id and string ledger' })
+      .json({
+        error: 'Each transaction must have numeric id, string ledger, and string transaction_type'
+      })
   }
 
   const client = await pool.connect()
@@ -105,12 +112,17 @@ exports.updateTempTableLedgers = async (req, res) => {
     await client.query('BEGIN');
 
     let updatedCount = 0;
+    // now update both ledger AND transaction_type
     const updateSql = `UPDATE "${temp_table}"
-                          SET ledger = $1
-                        WHERE id      = $2`
+                          SET ledger           = $1,
+                              transaction_type = $2
+                        WHERE id               = $3`
 
-    for (const { id, ledger } of transactions) {
-      const result = await client.query(updateSql, [ledger, id])
+    for (const { id, ledger, transaction_type } of transactions) {
+      const result = await client.query(
+        updateSql,
+        [ledger, transaction_type, id]
+      )
       updatedCount += result.rowCount
     }
 
@@ -119,8 +131,8 @@ exports.updateTempTableLedgers = async (req, res) => {
 
     // 5) Respond
     return res.json({
-      success:      true,
-      message:      'Ledger mappings updated successfully',
+      success:       true,
+      message:       'Ledger mappings updated successfully',
       updated_count: updatedCount
     })
 
@@ -133,7 +145,6 @@ exports.updateTempTableLedgers = async (req, res) => {
     client.release();
   }
 }
-
 
 // Add this to your transactionsController.js file
 exports.executeSql = async (req, res) => {
