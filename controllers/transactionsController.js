@@ -63,6 +63,76 @@ exports.createTempTable = async (req, res) => {
   }
 };
 
+exports.updateTempTableLedgers = async (req, res) => {
+  const { temp_table, email, company, transactions } = req.body
+
+  // 1) Validate request body
+  if (!temp_table || !email || !company || !Array.isArray(transactions)) {
+    return res
+      .status(400)
+      .json({ error: 'Missing required fields: temp_table, email, company, transactions[]' })
+  }
+  if (!/^[A-Za-z0-9_]+$/.test(temp_table)) {
+    return res
+      .status(400)
+      .json({ error: 'Invalid temp_table name' })
+  }
+  if (transactions.some(tx => typeof tx.id !== 'number' || typeof tx.ledger !== 'string')) {
+    return res
+      .status(400)
+      .json({ error: 'Each transaction must have numeric id and string ledger' })
+  }
+
+  const client = await pool.connect()
+  try {
+    // 2) Verify ownership
+    const meta = await client.query(
+      `SELECT 1
+         FROM user_temp_tables
+        WHERE email      = $1
+          AND company    = $2
+          AND temp_table = $3
+        LIMIT 1`,
+      [email, company, temp_table]
+    )
+    if (meta.rowCount === 0) {
+      return res
+        .status(404)
+        .json({ error: 'Temp table not found for this user/company' })
+    }
+
+    // 3) Begin transaction
+    await client.query('BEGIN');
+
+    let updatedCount = 0;
+    const updateSql = `UPDATE "${temp_table}"
+                          SET ledger = $1
+                        WHERE id      = $2`
+
+    for (const { id, ledger } of transactions) {
+      const result = await client.query(updateSql, [ledger, id])
+      updatedCount += result.rowCount
+    }
+
+    // 4) Commit all updates
+    await client.query('COMMIT');
+
+    // 5) Respond
+    return res.json({
+      success:      true,
+      message:      'Ledger mappings updated successfully',
+      updated_count: updatedCount
+    })
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error updating temp table ledgers:', err);
+    return res.status(500).json({ error: 'Database error' })
+
+  } finally {
+    client.release();
+  }
+}
 
 
 // Add this to your transactionsController.js file
