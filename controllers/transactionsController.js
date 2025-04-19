@@ -30,6 +30,7 @@ exports.createTempTable = async (req, res) => {
         bank_account      TEXT      NOT NULL DEFAULT '${bankAccount}',
         transaction_date  DATE,
         description       TEXT,
+        ledger            TEXT,
         withdrawal        NUMERIC,
         deposit           NUMERIC,
         balance           TEXT,
@@ -87,72 +88,6 @@ exports.executeSql = async (req, res) => {
   }
 };
 
-
-
-/**
- * Bulk‑inserts parsed PDF receipts into the specified temp table
- */
-// exports.insertParsedReceipts = async (req, res) => {
-//   try {
-//     const { temp_table: tableName, receipts } = req.body;
-
-//     // Validate inputs
-//     if (!tableName || !Array.isArray(receipts)) {
-//       return res.status(400).json({ error: "Missing temp_table or receipts array" });
-//     }
-//     // Sanitize table name
-//     if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
-//       return res.status(400).json({ error: "Invalid table name" });
-//     }
-
-//     // Columns must match the schema created by createTempTable
-//     const cols = [
-//       'transaction_date','description','withdrawal','deposit',
-//       'balance','balance_num','prev_balance','expected_balance',
-//       'page','entirechunk','transaction_type','amount','balance_match'
-//     ];
-//     const rowCount = receipts.length;
-//     const colCount = cols.length;
-
-//     // Build placeholders: ($1,…,$13), ($14,…,$26), …
-//     const valuesSql = receipts.map((_, i) => {
-//       const offset = i * colCount;
-//       const placeholders = cols.map((_, j) => `$${offset + j + 1}`);
-//       return `(${placeholders.join(', ')})`;
-//     }).join(',\n');
-
-//     // Flatten values in the correct column order
-//     const flatValues = receipts.flatMap(r => [
-//       r.date ? new Date(r.date.split('/').reverse().join('-')) : null,
-//       r.description || null,
-//       parseFloat(r.withdrawal) || 0,
-//       parseFloat(r.deposit) || 0,
-//       r.balance      || null,
-//       parseFloat(r.balance_num)       || 0,
-//       parseFloat(r.prev_balance)      || 0,
-//       parseFloat(r.expected_balance)  || 0,
-//       r.page         || null,
-//       r.entirechunk  || null,
-//       r.type         || null,
-//       parseFloat(r.amount)    || 0,
-//       Boolean(r.balance_match)
-//     ]);
-
-//     const sql = `
-//       INSERT INTO ${tableName} (${cols.join(', ')})
-//       VALUES
-//         ${valuesSql};
-//     `;
-
-//     // Execute bulk insert
-//     await pool.query(sql, flatValues);
-
-//     res.json({ status: 'success', inserted: rowCount });
-//   } catch (err) {
-//     console.error('Error in insertParsedReceipts:', err);
-//     res.status(500).json({ error: 'Database error' });
-//   }
-// };
 
 exports.insertParsedReceipts = async (req, res) => {
   try {
@@ -366,28 +301,59 @@ exports.getAllTempTables = async (req, res) => {
   }
 };
 
-/**
- * Fetches the most recent temp table for a user/company
- */
+
 exports.getTempTable = async (req, res) => {
   try {
-    const { email, company } = req.query;
-    if (!email || !company) {
-      return res.status(400).json({ error: 'Missing email or company' });
+    const { email, company, temp_table } = req.query;
+
+    // 1) All three params are mandatory
+    if (!email || !company || !temp_table) {
+      return res
+        .status(400)
+        .json({ error: 'Missing one or more required parameters: email, company, temp_table' });
     }
-    const result = await pool.query(
-      `SELECT temp_table, uploaded_file
-       FROM user_temp_tables
-       WHERE email = $1 AND company = $2
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [email, company]
+
+    // 2) Validate temp_table name
+    if (!/^[A-Za-z0-9_]+$/.test(temp_table)) {
+      return res
+        .status(400)
+        .json({ error: 'Invalid temp_table name' });
+    }
+
+    // 3) Verify ownership
+    const meta = await pool.query(
+      `SELECT 1
+         FROM user_temp_tables
+        WHERE email      = $1
+          AND company    = $2
+          AND temp_table = $3
+        LIMIT 1`,
+      [email, company, temp_table]
     );
-    if (result.rows.length === 0) return res.json({});
-    res.json(result.rows[0]);
+    if (meta.rowCount === 0) {
+      return res
+        .status(404)
+        .json({ error: 'Temp table not found for this user/company' });
+    }
+
+    // 4) Fetch only the requested columns
+    const data = await pool.query(
+      `SELECT id,
+              transaction_date,
+              description,
+              ledger,
+              transaction_type,
+              amount
+         FROM "${temp_table}"`
+    );
+
+    // 5) Return the rows
+    return res.json({ rows: data.rows });
   } catch (err) {
-    console.error('Error fetching temp table info:', err);
-    res.status(500).json({ error: 'Database error' });
+    console.error('Error fetching temp table data:', err);
+    return res
+      .status(500)
+      .json({ error: 'Database error' });
   }
 };
 
