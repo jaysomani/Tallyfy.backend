@@ -13,7 +13,7 @@ router.post('/updateTempExcel', transactionsController.updateTempExcel);
 router.get('/tempLedgers', transactionsController.getTempLedgers);
 router.post('/alterTempTable', transactionsController.alterTempTable);
 router.post('/executeSql', transactionsController.executeSql);
- 
+router.post('/updateTempTableLedgers', transactionsController.updateTempTableLedgers);
  // Route for deleting a temporary table
  router.post('/deleteTempTable', async (req, res) => {
    try {
